@@ -1001,4 +1001,5 @@ def main():
             **Note:** Previous Scores should be formatted as a list in square brackets or comma-separated values.
             """)
 
-if __name__ == "__main__"
+if __name__ == "__main__":
+    main()
