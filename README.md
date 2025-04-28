@@ -1,3 +1,5 @@
+Live here- https://advance-student-score-analyzer-withml-2jfys393z8huubn2xucudm.streamlit.app/
+
 🎓 Advance Student Score Analyzer with ML 🌟
 Welcome to the Advance Student Score Analyzer with ML 🚀, a Streamlit-based web app designed to predict student performance 📈, analyze trends 📊, and provide personalized recommendations 💡 using machine learning. This tool helps educators and students track academic progress and identify areas for growth 🌱.
 🌟 Overview
