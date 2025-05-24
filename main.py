@@ -12,6 +12,10 @@ import warnings
 import os
 from streamlit.components.v1 import html
 from uuid import uuid4
+import requests
+import base64
+from io import BytesIO
+from gtts import gTTS
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -148,6 +152,159 @@ def save_new_student(data, new_student_data, output_file='student_data.csv'):
     except Exception as e:
         st.error(f"Error saving student data: {str(e)}")
         return False
+
+# ======================
+# AI INTEGRATION
+# ======================
+
+# Load Groq API key from Streamlit secrets
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"  # Groq OpenAI-compatible endpoint
+
+def get_ai_recommendations(student_data, current_perc, prediction, trend):
+    """
+    Get AI-powered recommendations from Groq API with improved error handling.
+
+    Args:
+        student_data (dict): Student data.
+        current_perc (float): Current percentage.
+        prediction (float): Predicted score.
+        trend (float): Performance trend.
+
+    Returns:
+        dict: Recommendations and potential error message.
+    """
+    if not GROQ_API_KEY:
+        return {
+            "recommendations": [
+                "1. General: Review study habits (Reason: API key not configured)",
+                "2. Attendance: Maintain regular attendance (Reason: Default recommendation)"
+            ],
+            "error": "API key not configured"
+        }
+
+    if not GROQ_API_KEY.startswith("gsk_") or len(GROQ_API_KEY) < 10:
+        return {
+            "recommendations": [
+                "1. General: Review study habits (Reason: Invalid API key format)",
+                "2. Attendance: Maintain regular attendance (Reason: Default recommendation)"
+            ],
+            "error": "Invalid API key format"
+        }
+
+    try:
+        prompt = f"""
+        As an expert educational consultant, provide 3-5 specific recommendations for {student_data.get('Student_Name', 'the student')} 
+        based on this performance data:
+
+        - Current: {current_perc}%
+        - Predicted: {prediction}%
+        - Trend: {'+' if trend >= 0 else ''}{trend:.1f}%
+        - Attendance: {student_data.get('Attendance', 0)}%
+        - Reading: {student_data.get('Reading_Score', 0)}/10
+        - Writing: {student_data.get('Writing_Score', 0)}/10
+        - History: {student_data.get('Previous Scores', [])}
+
+        Format:
+        [Priority]. [Area]: [Action] (Rationale: [brief explanation])
+        """
+
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": "llama3-70b-8192",
+            "messages": [
+                {"role": "system", "content": "You are an expert educational consultant providing concise, actionable recommendations."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+
+        response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+
+        return {
+            "recommendations": result['choices'][0]['message']['content'].split('\n'),
+            "error": None
+        }
+
+    except requests.exceptions.HTTPError as e:
+        return {
+            "recommendations": [
+                "1. System: Verify API endpoint and key (Reason: HTTP error)",
+                "2. General: Continue regular studies (Reason: Default fallback)"
+            ],
+            "error": f"HTTP Error: {str(e)}"
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "recommendations": [
+                "1. System: Check internet connection (Reason: API request failed)",
+                "2. General: Review study materials (Reason: Default recommendation)"
+            ],
+            "error": f"Request Error: {str(e)}"
+        }
+
+    except Exception as e:
+        return {
+            "recommendations": [
+                "1. System: Technical issue occurred (Reason: Unexpected error)",
+                "2. General: Focus on core subjects (Reason: Default recommendation)"
+            ],
+            "error": f"Unexpected Error: {str(e)}"
+        }
+
+# ======================
+# VOICE FEATURES
+# ======================
+
+def text_to_speech(text, lang='en'):
+    """
+    Convert text to speech with improved error handling.
+
+    Args:
+        text (str): Text to convert to speech.
+        lang (str): Language code.
+
+    Returns:
+        bytes: Audio bytes or None if failed.
+    """
+    try:
+        if not text or not isinstance(text, str):
+            raise ValueError("Invalid text input")
+            
+        tts = gTTS(text=text[:500], lang=lang, slow=False)
+        audio_buffer = BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+        return audio_buffer.read()
+    except Exception as e:
+        st.error(f"Voice synthesis error: {str(e)}")
+        return None
+
+def create_audio_player(audio_bytes):
+    """
+    Create an audio player for the browser.
+
+    Args:
+        audio_bytes (bytes): Audio data in bytes.
+
+    Returns:
+        str: HTML audio player element.
+    """
+    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+    return f"""
+    <audio controls style="width: 100%; margin: 10px 0; background-color: #e6f3ff; border: 1px solid #1e88e5;">
+        <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+        Your browser does not support audio playback.
+    </audio>
+    """
 
 # ======================
 # MACHINE LEARNING MODEL
@@ -588,11 +745,65 @@ def display_recommendations(attendance, literacy, trend, prediction, current_per
     
     return recommendations
 
+def display_ai_recommendations(recommendations_result):
+    """
+    Display AI recommendations with voice playback option.
+
+    Args:
+        recommendations_result (dict): AI recommendations and potential error.
+    """
+    st.subheader("🤖 AI-Powered Recommendations")
+    
+    if recommendations_result.get("error"):
+        st.warning(f"AI Service Note: {recommendations_result['error']}")
+    
+    with st.expander("📝 View AI Recommendations", expanded=True):
+        st.markdown("""
+        <style>
+        .recommendation-container {
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #e6f3ff;
+            border-radius: 8px;
+            border: 1px solid #1e88e5;
+        }
+        .recommendation-container ul {
+            padding-left: 20px;
+        }
+        .recommendation-container li {
+            margin-bottom: 10px;
+            word-wrap: break-word;
+            white-space: normal;
+            color: #333;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        recommendations_html = "<div class='recommendation-container'><ul>"
+        for rec in recommendations_result['recommendations']:
+            if rec.strip():
+                recommendations_html += f"<li>{rec}</li>"
+        recommendations_html += "</ul></div>"
+        
+        st.markdown(recommendations_html, unsafe_allow_html=True)
+    
+    if st.button("🎧 Listen to AI Recommendations", key="listen_ai_btn"):
+        with st.spinner("Generating voice..."):
+            audio_text = "\n\n".join([rec for rec in recommendations_result['recommendations'] if rec.strip()])
+            audio_data = text_to_speech(audio_text)
+            
+            if audio_data:
+                st.markdown(create_audio_player(audio_data), unsafe_allow_html=True)
+                st.success("AI Recommendations ready! Use the player above.")
+            else:
+                st.error("Voice generation failed. Please try again.")
+
 # ======================
 # REPORT EXPORT
 # ======================
 
-def export_report(student_name, current_perc, prediction, trend, literacy, recommendations):
+def export_report(student_name, current_perc, prediction, trend, literacy, recommendations, ai_recommendations):
     """
     Export analysis report as a CSV.
 
@@ -603,6 +814,7 @@ def export_report(student_name, current_perc, prediction, trend, literacy, recom
         trend (float): Performance trend.
         literacy (float): Literacy score.
         recommendations (list): List of recommendation strings.
+        ai_recommendations (list): List of AI recommendation strings.
 
     Returns:
         pd.DataFrame: DataFrame for export.
@@ -613,7 +825,8 @@ def export_report(student_name, current_perc, prediction, trend, literacy, recom
         'Predicted_Score': [prediction],
         'Trend': [trend],
         'Literacy_Score': [literacy],
-        'Recommendations': ['; '.join(recommendations)]
+        'Recommendations': ['; '.join(recommendations)],
+        'AI_Recommendations': ['; '.join([rec for rec in ai_recommendations if rec.strip()])]
     }
     return pd.DataFrame(report_data)
 
@@ -636,6 +849,25 @@ def display_analysis(student_db, analysis):
     attendance = analysis['attendance']
     literacy = analysis['literacy']
     trend = analysis['trend']
+    
+    # Fetch AI recommendations
+    with st.spinner("Generating AI recommendations..."):
+        # Check if the student exists in student_db
+        filtered_db = student_db[student_db['Student_Name'] == student_name]
+        if not filtered_db.empty:
+            student_data = filtered_db.iloc[0].to_dict()
+        else:
+            # If student not found in student_db (e.g., new student), construct student_data from analysis
+            student_data = {
+                'Student_Name': student_name,
+                'Previous Scores': historical,
+                'Current Percentage': current_perc,
+                'Attendance': attendance,
+                'Reading_Score': literacy * 2 - analysis.get('Writing_Score', literacy),  # Estimate if needed
+                'Writing_Score': analysis.get('Writing_Score', literacy),
+                'Grade': analysis.get('Grade', 'C')  # Default to 'C' if grade not available
+            }
+        ai_recommendations_result = get_ai_recommendations(student_data, current_perc, prediction, trend)
     
     st.subheader("📈 Performance Analysis Report")
     st.plotly_chart(plot_performance_trend(
@@ -693,9 +925,10 @@ def display_analysis(student_db, analysis):
             st.warning("Feature importance data not available")
     
     recommendations = display_recommendations(attendance, literacy, trend, prediction, current_perc)
+    display_ai_recommendations(ai_recommendations_result)
     
     report_df = export_report(
-        student_name, current_perc, prediction, trend, literacy, recommendations
+        student_name, current_perc, prediction, trend, literacy, recommendations, ai_recommendations_result['recommendations']
     )
     st.download_button(
         label="📥 Download Report",
@@ -817,8 +1050,9 @@ def main():
         This tool predicts student performance using machine learning, offering:
         - Performance trend analysis
         - Predictive insights
-        - Personalized recommendations
+        - Personalized recommendations (including AI-powered suggestions)
         - Interactive visualizations
+        - Voice feedback for recommendations
         - Report export functionality
         """)
     
@@ -926,7 +1160,10 @@ def main():
                                         'prediction': prediction,
                                         'attendance': attendance,
                                         'literacy': literacy,
-                                        'trend': trend
+                                        'trend': trend,
+                                        'Reading_Score': reading,
+                                        'Writing_Score': writing,
+                                        'Grade': grade
                                     }
                                     st.session_state.new_student_form_submitted = True
                 
